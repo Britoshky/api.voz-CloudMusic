@@ -1,0 +1,8 @@
+scipy
+librosa
+pydub
+flask
+flask-cors
+soundfile
+python-dotenv
+git+https://github.com/coqui-ai/TTS.git

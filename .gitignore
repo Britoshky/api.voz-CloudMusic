@@ -1,0 +1,33 @@
+# Ignore Python artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+
+# Environment variables
+.env
+.env.local
+
+# Ignore outputs and temp files
+outputs/*
+!outputs/.gitkeep
+temp_uploads/*
+!temp_uploads/.gitkeep
+voice_gallery/*
+!voice_gallery/.gitkeep
+voices_db.json
+
+# Ignore test files
+*.wav
+*.mp3
+test_*.py
+
+# Ignore IDE
+.vscode/
+.idea/
+*.swp
+*.swo

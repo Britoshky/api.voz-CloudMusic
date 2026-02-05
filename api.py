@@ -1,0 +1,262 @@
+from flask import Flask, request, send_file, jsonify
+from flask_cors import CORS
+from tts_engine import TTSEngine
+import os
+import uuid
+import soundfile as sf
+import librosa
+import json
+from dotenv import load_dotenv
+
+# Cargar variables de entorno
+load_dotenv()
+
+app = Flask(__name__)
+
+# Configurar CORS desde variables de entorno
+allowed_origins = os.getenv('ALLOWED_ORIGINS', 'http://localhost:3000').split(',')
+CORS(app, origins=allowed_origins)
+
+# Configurar Flask
+app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY', 'dev-secret-key-change-me')
+app.config['DEBUG'] = os.getenv('FLASK_DEBUG', 'false').lower() == 'true'
+
+# Inicializar engine TTS
+engine = TTSEngine()
+
+# Directorios desde variables de entorno
+OUTPUT_DIR = os.getenv('OUTPUT_DIR', 'outputs')
+TEMP_DIR = os.getenv('TEMP_DIR', 'temp_uploads')
+VOICES_DIR = os.getenv('VOICES_DIR', 'voice_gallery')
+VOICES_DB = os.getenv('VOICES_DB', 'voices_db.json')
+
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+os.makedirs(TEMP_DIR, exist_ok=True)
+os.makedirs(VOICES_DIR, exist_ok=True)
+
+def convert_to_wav(input_path, output_path):
+    """Convierte cualquier formato de audio a WAV usando librosa"""
+    try:
+        # Cargar audio (soporta mp3, m4a, ogg, flac, etc)
+        audio, sr = librosa.load(input_path, sr=None, mono=True)
+        # Guardar como WAV
+        sf.write(output_path, audio, sr)
+        return True
+    except Exception as e:
+        print(f"Error converting audio: {e}")
+        return False
+
+def get_audio_duration(filepath):
+    """Obtiene la duración del audio en segundos"""
+    try:
+        audio, sr = librosa.load(filepath, sr=None)
+        duration = librosa.get_duration(y=audio, sr=sr)
+        return duration
+    except:
+        return 0
+
+def load_voices_db():
+    """Carga la base de datos de voces guardadas"""
+    if os.path.exists(VOICES_DB):
+        with open(VOICES_DB, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    return []
+
+def save_voices_db(voices):
+    """Guarda la base de datos de voces"""
+    with open(VOICES_DB, 'w', encoding='utf-8') as f:
+        json.dump(voices, f, ensure_ascii=False, indent=2)
+
+@app.route('/tts', methods=['POST'])
+def generate_speech():
+    """Endpoint simple para TTS sin clonación de voz"""
+    data = request.json
+    text = data.get('text')
+    language = data.get('language', 'es')
+    
+    if not text:
+        return jsonify({"error": "No text provided"}), 400
+    
+    try:
+        output_path = os.path.join(OUTPUT_DIR, f"{uuid.uuid4()}.wav")
+        engine.text_to_speech(text, output_path, None, language)
+        return send_file(output_path, mimetype='audio/wav')
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/clone', methods=['POST'])
+def clone_voice():
+    """Endpoint para TTS con clonación de voz desde archivo de audio"""
+    if 'audio' not in request.files:
+        return jsonify({"error": "No audio file"}), 400
+    
+    audio = request.files['audio']
+    text = request.form.get('text')
+    language = request.form.get('language', 'es')
+    temperature = float(request.form.get('temperature', 0.75))  # Calidad de voz
+    speed = float(request.form.get('speed', 1.0))  # Velocidad
+    
+    if not text:
+        return jsonify({"error": "No text provided"}), 400
+    
+    # Guardar archivo temporal con su extensión original
+    original_ext = os.path.splitext(audio.filename)[1]
+    temp_input = os.path.join(TEMP_DIR, f"input_{uuid.uuid4()}{original_ext}")
+    temp_wav = os.path.join(TEMP_DIR, f"converted_{uuid.uuid4()}.wav")
+    
+    audio.save(temp_input)
+    
+    # Convertir a WAV si es necesario
+    if original_ext.lower() != '.wav':
+        if not convert_to_wav(temp_input, temp_wav):
+            os.remove(temp_input)
+            return jsonify({"error": "Error converting audio format"}), 400
+        os.remove(temp_input)
+        speaker_path = temp_wav
+    else:
+        speaker_path = temp_input
+    
+    # Validar duración del audio (recomendado: 3-10 segundos)
+    duration = get_audio_duration(speaker_path)
+    if duration < 2:
+        os.remove(speaker_path)
+        return jsonify({"error": f"Audio muy corto ({duration:.1f}s). Usa mínimo 3 segundos para mejor calidad"}), 400
+    
+    try:
+        output_path = os.path.join(OUTPUT_DIR, f"{uuid.uuid4()}.wav")
+        engine.text_to_speech(
+            text=text, 
+            output_path=output_path, 
+            speaker_wav=speaker_path, 
+            language=language,
+            temperature=temperature,
+            speed=speed
+        )
+        
+        os.remove(speaker_path)
+        
+        return send_file(output_path, mimetype='audio/wav')
+    except Exception as e:
+        if os.path.exists(speaker_path):
+            os.remove(speaker_path)
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/voices', methods=['GET'])
+def get_voices():
+    """Obtiene la lista de voces guardadas en la galería"""
+    voices = load_voices_db()
+    return jsonify(voices)
+
+@app.route('/voices', methods=['POST'])
+def save_voice():
+    """Guarda una voz en la galería"""
+    if 'audio' not in request.files:
+        return jsonify({"error": "No audio file"}), 400
+    
+    audio = request.files['audio']
+    name = request.form.get('name', 'Sin nombre')
+    description = request.form.get('description', '')
+    language = request.form.get('language', 'es')
+    
+    # Guardar archivo
+    original_ext = os.path.splitext(audio.filename)[1]
+    voice_id = str(uuid.uuid4())
+    filename = f"{voice_id}.wav"
+    temp_input = os.path.join(TEMP_DIR, f"temp_{voice_id}{original_ext}")
+    final_path = os.path.join(VOICES_DIR, filename)
+    
+    audio.save(temp_input)
+    
+    # Convertir a WAV
+    if not convert_to_wav(temp_input, final_path):
+        os.remove(temp_input)
+        return jsonify({"error": "Error converting audio"}), 400
+    
+    os.remove(temp_input)
+    
+    # Obtener duración
+    duration = get_audio_duration(final_path)
+    
+    # Guardar metadata
+    voices = load_voices_db()
+    voice_data = {
+        "id": voice_id,
+        "name": name,
+        "description": description,
+        "language": language,
+        "filename": filename,
+        "duration": round(duration, 2),
+        "created_at": str(uuid.uuid4())  # Placeholder, idealmente usar timestamp
+    }
+    voices.append(voice_data)
+    save_voices_db(voices)
+    
+    return jsonify(voice_data), 201
+
+@app.route('/voices/<voice_id>', methods=['DELETE'])
+def delete_voice(voice_id):
+    """Elimina una voz de la galería"""
+    voices = load_voices_db()
+    voice = next((v for v in voices if v['id'] == voice_id), None)
+    
+    if not voice:
+        return jsonify({"error": "Voice not found"}), 404
+    
+    # Eliminar archivo
+    filepath = os.path.join(VOICES_DIR, voice['filename'])
+    if os.path.exists(filepath):
+        os.remove(filepath)
+    
+    # Actualizar DB
+    voices = [v for v in voices if v['id'] != voice_id]
+    save_voices_db(voices)
+    
+    return jsonify({"success": True})
+
+@app.route('/voices/<voice_id>/use', methods=['POST'])
+def use_voice(voice_id):
+    """Usa una voz de la galería para generar TTS"""
+    voices = load_voices_db()
+    voice = next((v for v in voices if v['id'] == voice_id), None)
+    
+    if not voice:
+        return jsonify({"error": "Voice not found"}), 404
+    
+    data = request.json
+    text = data.get('text')
+    language = data.get('language', voice['language'])
+    temperature = float(data.get('temperature', 0.75))
+    speed = float(data.get('speed', 1.0))
+    
+    if not text:
+        return jsonify({"error": "No text provided"}), 400
+    
+    speaker_path = os.path.join(VOICES_DIR, voice['filename'])
+    
+    if not os.path.exists(speaker_path):
+        return jsonify({"error": "Voice file not found"}), 404
+    
+    try:
+        output_path = os.path.join(OUTPUT_DIR, f"{uuid.uuid4()}.wav")
+        engine.text_to_speech(
+            text=text,
+            output_path=output_path,
+            speaker_wav=speaker_path,
+            language=language,
+            temperature=temperature,
+            speed=speed
+        )
+        
+        return send_file(output_path, mimetype='audio/wav')
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/health', methods=['GET'])
+def health_check():
+    """Endpoint de health check para Coolify"""
+    return jsonify({"status": "healthy", "service": "tts-voice-cloning"}), 200
+
+if __name__ == '__main__':
+    # Obtener puerto de variable de entorno o usar 5000 por defecto
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port, debug=False)
