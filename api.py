@@ -145,7 +145,15 @@ def clone_voice():
 def get_voices():
     """Obtiene la lista de voces guardadas en la galería"""
     voices = load_voices_db()
-    return jsonify(voices)
+    
+    # Separar voces por tipo
+    preloaded_voices = [v for v in voices if v.get('type') == 'preloaded']
+    user_voices = [v for v in voices if v.get('type') != 'preloaded']
+    
+    return jsonify({
+        'preloaded_voices': preloaded_voices,
+        'user_voices': user_voices
+    })
 
 @app.route('/voices', methods=['POST'])
 def save_voice():
@@ -186,6 +194,7 @@ def save_voice():
         "language": language,
         "filename": filename,
         "duration": round(duration, 2),
+        "type": "user",  # Marcar como voz de usuario
         "created_at": str(uuid.uuid4())  # Placeholder, idealmente usar timestamp
     }
     voices.append(voice_data)
@@ -257,6 +266,6 @@ def health_check():
     return jsonify({"status": "healthy", "service": "tts-voice-cloning"}), 200
 
 if __name__ == '__main__':
-    # Obtener puerto de variable de entorno o usar 5000 por defecto
-    port = int(os.environ.get('PORT', 5000))
+    # Obtener puerto de variable de entorno o usar 4000 por defecto
+    port = int(os.getenv('FLASK_PORT', 4000))
     app.run(host='0.0.0.0', port=port, debug=False)

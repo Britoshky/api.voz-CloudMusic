@@ -1,0 +1,18 @@
+# No incluir estos archivos/directorios en la imagen Docker
+outputs/
+temp_uploads/
+voice_gallery/
+*.wav
+*.mp3
+*.log
+*.pyc
+__pycache__/
+.git/
+.env
+.env.local
+venv/
+*.md
+README.md
+.gitignore
+.vscode/
+benchmark_results/

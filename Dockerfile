@@ -27,11 +27,11 @@ COPY . .
 RUN mkdir -p outputs temp_uploads voice_gallery
 
 # Exponer puerto
-EXPOSE 5000
+EXPOSE 4000
 
 # Variables de entorno
 ENV PYTHONUNBUFFERED=1
-ENV PORT=5000
+ENV FLASK_PORT=4000
 
 # Comando de inicio
 CMD ["venv/bin/python", "api.py"]

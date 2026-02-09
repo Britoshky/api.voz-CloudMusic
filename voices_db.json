@@ -1,0 +1,112 @@
+[
+  {
+    "id": "c5c8b8b4-49b1-440c-bb1c-8501f4302814",
+    "name": "Locutor Chileno Carlos S",
+    "description": "Locutor profesional chileno",
+    "language": "es",
+    "filename": "c5c8b8b4-49b1-440c-bb1c-8501f4302814.wav",
+    "duration": 7.27,
+    "type": "preloaded",
+    "created_at": "2026-02-08"
+  },
+  {
+    "id": "45c0a91f-0064-4e4f-9d38-58f7b30bd3f1",
+    "name": "Locutor Chileno Harold 1",
+    "description": "Locutor profesional chileno",
+    "language": "es",
+    "filename": "45c0a91f-0064-4e4f-9d38-58f7b30bd3f1.wav",
+    "duration": 21.03,
+    "type": "preloaded",
+    "created_at": "2026-02-08"
+  },
+  {
+    "id": "4b06eaac-1115-43c4-b9a9-cd40ce8e20af",
+    "name": "Locutor Chileno Harold 2",
+    "description": "Locutor profesional chileno",
+    "language": "es",
+    "filename": "4b06eaac-1115-43c4-b9a9-cd40ce8e20af.wav",
+    "duration": 9.06,
+    "type": "preloaded",
+    "created_at": "2026-02-08"
+  },
+  {
+    "id": "a3483e72-d306-4f3f-9766-794b21cfd834",
+    "name": "Locutor Chileno Harold 3",
+    "description": "Locutor profesional chileno",
+    "language": "es",
+    "filename": "a3483e72-d306-4f3f-9766-794b21cfd834.wav",
+    "duration": 31.84,
+    "type": "preloaded",
+    "created_at": "2026-02-08"
+  },
+  {
+    "id": "753c84b5-fa58-4d50-8870-405d9f732a9e",
+    "name": "Locutor Chileno Harold",
+    "description": "Locutor profesional chileno",
+    "language": "es",
+    "filename": "753c84b5-fa58-4d50-8870-405d9f732a9e.wav",
+    "duration": 12.7,
+    "type": "preloaded",
+    "created_at": "2026-02-08"
+  },
+  {
+    "id": "2644fe63-2698-400f-b677-ab1aadcd59cf",
+    "name": "Locutor Chileno Juan 1",
+    "description": "Locutor profesional chileno",
+    "language": "es",
+    "filename": "2644fe63-2698-400f-b677-ab1aadcd59cf.wav",
+    "duration": 8.62,
+    "type": "preloaded",
+    "created_at": "2026-02-08"
+  },
+  {
+    "id": "5d3954a0-8c1a-4237-9202-bbf5534e0a03",
+    "name": "Locutor Chileno Juan",
+    "description": "Locutor profesional chileno",
+    "language": "es",
+    "filename": "5d3954a0-8c1a-4237-9202-bbf5534e0a03.wav",
+    "duration": 16.35,
+    "type": "preloaded",
+    "created_at": "2026-02-08"
+  },
+  {
+    "id": "8c80a439-fa7f-4be9-88a0-a2d196669aca",
+    "name": "Locutor Chileno Marco L",
+    "description": "Locutor profesional chileno",
+    "language": "es",
+    "filename": "8c80a439-fa7f-4be9-88a0-a2d196669aca.wav",
+    "duration": 7.08,
+    "type": "preloaded",
+    "created_at": "2026-02-08"
+  },
+  {
+    "id": "8630757d-e983-46a7-aaff-3496965510b8",
+    "name": "Locutor Chileno Nicolas 1",
+    "description": "Locutor profesional chileno",
+    "language": "es",
+    "filename": "8630757d-e983-46a7-aaff-3496965510b8.wav",
+    "duration": 7.35,
+    "type": "preloaded",
+    "created_at": "2026-02-08"
+  },
+  {
+    "id": "59d2e7d3-cf0e-468b-b985-fdc53d9858bd",
+    "name": "Locutora Chilena Jennifer F",
+    "description": "Locutor profesional chileno",
+    "language": "es",
+    "filename": "59d2e7d3-cf0e-468b-b985-fdc53d9858bd.wav",
+    "duration": 10.98,
+    "type": "preloaded",
+    "created_at": "2026-02-08"
+  },
+  {
+    "id": "aec60f82-58a9-47b7-8b47-e547f1f61976",
+    "name": "Locutora Chilena Marcia Del C",
+    "description": "Locutor profesional chileno",
+    "language": "es",
+    "filename": "aec60f82-58a9-47b7-8b47-e547f1f61976.wav",
+    "duration": 16.49,
+    "type": "preloaded",
+    "created_at": "2026-02-08"
+  }
+]

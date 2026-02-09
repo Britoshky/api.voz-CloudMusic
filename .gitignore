@@ -10,21 +10,20 @@ ENV/
 
 # Environment variables
 .env
-.env.local
 
 # Ignore outputs and temp files
 outputs/*
 !outputs/.gitkeep
 temp_uploads/*
 !temp_uploads/.gitkeep
-voice_gallery/*
-!voice_gallery/.gitkeep
-voices_db.json
 
-# Ignore test files
-*.wav
-*.mp3
-test_*.py
+# Models directory (downloaded models)
+models/*
+!models/.gitkeep
+
+# Ignore audio test files
+test_*.wav
+test_*.mp3
 
 # Ignore IDE
 .vscode/
