@@ -1,8 +1,10 @@
 scipy
 librosa
-pydub
-flask
-flask-cors
-soundfile
-python-dotenv
-git+https://github.com/coqui-ai/TTS.git
+Sistema rápido y eficiente para corrección ortográfica y gramatical en español
+"""sk
+import language_tool_pythonflask-cors
+
+class TextCorrector:
+    def __init__(self, language='es'):tool-python
+        """Inicializar el corrector de texto"""ai/TTS.git
+        print(f"Inicializando corrector de texto para idioma: {language}")        self.tool = language_tool_python.LanguageTool(language)        print("✅ Corrector de texto inicializado correctamente")        def correct_text(self, text):        """        Corregir texto automáticamente                Args:            text (str): Texto a corregir                    Returns:            dict: {                'original': texto original,                'corrected': texto corregido,                'changes': lista de cambios realizados,                'changes_count': número de cambios            }        """        if not text or not text.strip():            return {                'original': text,                'corrected': text,                'changes': [],                'changes_count': 0            }                # Obtener coincidencias (errores)        matches = self.tool.check(text)                # Corregir el texto        corrected_text = language_tool_python.utils.correct(text, matches)                # Extraer información de los cambios        changes = []        for match in matches:            change_info = {                'error': match.context,                'message': match.message,                'replacements': match.replacements[:3] if match.replacements else [],                'offset': match.offset,                'errorLength': match.errorLength            }            changes.append(change_info)                return {            'original': text,            'corrected': corrected_text,            'changes': changes,            'changes_count': len(matches)        }        def get_suggestions(self, text):        """        Obtener sugerencias de corrección sin aplicarlas                Args:            text (str): Texto a analizar                    Returns:            list: Lista de sugerencias        """        matches = self.tool.check(text)                suggestions = []        for match in matches:            suggestion = {                'error_text': text[match.offset:match.offset + match.errorLength],                'message': match.message,                'suggestions': match.replacements[:5] if match.replacements else [],                'rule_id': match.ruleId,                'category': match.category            }            suggestions.append(suggestion)                return suggestions        def close(self):        """Cerrar el corrector de texto"""        if hasattr(self, 'tool'):            self.tool.close()

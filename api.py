@@ -1,6 +1,7 @@
 from flask import Flask, request, send_file, jsonify
 from flask_cors import CORS
 from tts_engine import TTSEngine
+from text_corrector import TextCorrector
 import os
 import uuid
 import soundfile as sf
@@ -21,8 +22,9 @@ CORS(app, origins=allowed_origins)
 app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY', 'dev-secret-key-change-me')
 app.config['DEBUG'] = os.getenv('FLASK_DEBUG', 'false').lower() == 'true'
 
-# Inicializar engine TTS
+# Inicializar engine TTS y corrector de texto
 engine = TTSEngine()
+text_corrector = TextCorrector(language='es')
 
 # Directorios desde variables de entorno
 OUTPUT_DIR = os.getenv('OUTPUT_DIR', 'outputs')
@@ -257,6 +259,41 @@ def use_voice(voice_id):
         )
         
         return send_file(output_path, mimetype='audio/wav')
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/correct-text', methods=['POST'])
+def correct_text():
+    """Endpoint para corrección automática de texto"""
+    data = request.json
+    text = data.get('text')
+    
+    if not text:
+        return jsonify({"error": "No text provided"}), 400
+    
+    try:
+        print(f"[DEBUG] Corrigiendo texto: {text[:50]}...")
+        result = text_corrector.correct_text(text)
+        print(f"[DEBUG] Correcciones: {result['changes_count']}")
+        return jsonify(result), 200
+    except Exception as e:
+        print(f"[ERROR] Error en corrección: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/text-suggestions', methods=['POST'])
+def get_text_suggestions():
+    """Endpoint para obtener sugerencias de corrección sin aplicarlas"""
+    data = request.json
+    text = data.get('text')
+    
+    if not text:
+        return jsonify({"error": "No text provided"}), 400
+    
+    try:
+        suggestions = text_corrector.get_suggestions(text)
+        return jsonify({"suggestions": suggestions}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
