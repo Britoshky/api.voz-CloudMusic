@@ -35,7 +35,7 @@ Crea un archivo `.env` basado en `.env.example`:
 PORT=5002
 
 # URLs permitidas para CORS (separadas por coma)
-ALLOWED_ORIGINS=http://localhost:3000,http://localhost:3001
+ALLOWED_ORIGINS=http://localhost:3004
 
 # Modo de ejecución
 ENVIRONMENT=development
@@ -55,6 +55,10 @@ CUDA_VISIBLE_DEVICES=0
 # Flask
 FLASK_DEBUG=false
 FLASK_SECRET_KEY=your-secret-key-here-change-in-production
+
+# Rate limit por usuario/IP
+RATE_LIMIT_MAX_REQUESTS=10
+RATE_LIMIT_WINDOW_SECONDS=86400
 ```
 
 ## 🐳 Deploy en Coolify

@@ -1,9 +1,10 @@
 from flask import Flask, request, send_file, jsonify
 from flask_cors import CORS
 from tts_engine import TTSEngine
-from text_corrector import TextCorrector
 import os
 import uuid
+import threading
+import time
 import soundfile as sf
 import librosa
 import json
@@ -22,9 +23,15 @@ CORS(app, origins=allowed_origins)
 app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY', 'dev-secret-key-change-me')
 app.config['DEBUG'] = os.getenv('FLASK_DEBUG', 'false').lower() == 'true'
 
-# Inicializar engine TTS y corrector de texto
+# Rate limiting (10 peticiones por usuario/IP por defecto)
+RATE_LIMIT_MAX_REQUESTS = int(os.getenv('RATE_LIMIT_MAX_REQUESTS', '10'))
+RATE_LIMIT_WINDOW_SECONDS = int(os.getenv('RATE_LIMIT_WINDOW_SECONDS', '86400'))
+RATE_LIMIT_EXEMPT_PATHS = {'/health'}
+rate_limit_counters = {}
+rate_limit_lock = threading.Lock()
+
+# Inicializar engine TTS
 engine = TTSEngine()
-text_corrector = TextCorrector(language='es')
 
 # Directorios desde variables de entorno
 OUTPUT_DIR = os.getenv('OUTPUT_DIR', 'outputs')
@@ -35,6 +42,62 @@ VOICES_DB = os.getenv('VOICES_DB', 'voices_db.json')
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 os.makedirs(TEMP_DIR, exist_ok=True)
 os.makedirs(VOICES_DIR, exist_ok=True)
+
+def get_client_identifier():
+    """Obtiene un identificador de cliente usando header opcional o IP real."""
+    user_header = request.headers.get('X-User-Id')
+    if user_header:
+        return f"user:{user_header}"
+
+    forwarded_for = request.headers.get('X-Forwarded-For', '')
+    if forwarded_for:
+        client_ip = forwarded_for.split(',')[0].strip()
+        if client_ip:
+            return f"ip:{client_ip}"
+
+    real_ip = request.headers.get('X-Real-IP')
+    if real_ip:
+        return f"ip:{real_ip}"
+
+    return f"ip:{request.remote_addr or 'unknown'}"
+
+@app.before_request
+def enforce_rate_limit():
+    """Limita a RATE_LIMIT_MAX_REQUESTS por usuario/IP en ventana de tiempo definida."""
+    if request.method == 'OPTIONS' or request.path in RATE_LIMIT_EXEMPT_PATHS:
+        return None
+
+    identifier = get_client_identifier()
+    now = int(time.time())
+
+    with rate_limit_lock:
+        entry = rate_limit_counters.get(identifier)
+
+        if not entry:
+            entry = {"count": 0, "window_start": now}
+            rate_limit_counters[identifier] = entry
+
+        elapsed = now - entry["window_start"]
+        if elapsed >= RATE_LIMIT_WINDOW_SECONDS:
+            entry["count"] = 0
+            entry["window_start"] = now
+
+        used_requests = entry["count"]
+        if used_requests >= RATE_LIMIT_MAX_REQUESTS:
+            retry_after = max(1, RATE_LIMIT_WINDOW_SECONDS - elapsed)
+            return jsonify({
+                "error": "Límite de peticiones alcanzado para esta ventana",
+                "limit": RATE_LIMIT_MAX_REQUESTS,
+                "used": used_requests,
+                "remaining": 0,
+                "retry_after_seconds": retry_after,
+                "window_seconds": RATE_LIMIT_WINDOW_SECONDS,
+                "identifier": identifier
+            }), 429
+
+        entry["count"] = used_requests + 1
+
+    return None
 
 def convert_to_wav(input_path, output_path):
     """Convierte cualquier formato de audio a WAV usando librosa"""
@@ -259,41 +322,6 @@ def use_voice(voice_id):
         )
         
         return send_file(output_path, mimetype='audio/wav')
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-@app.route('/correct-text', methods=['POST'])
-def correct_text():
-    """Endpoint para corrección automática de texto"""
-    data = request.json
-    text = data.get('text')
-    
-    if not text:
-        return jsonify({"error": "No text provided"}), 400
-    
-    try:
-        print(f"[DEBUG] Corrigiendo texto: {text[:50]}...")
-        result = text_corrector.correct_text(text)
-        print(f"[DEBUG] Correcciones: {result['changes_count']}")
-        return jsonify(result), 200
-    except Exception as e:
-        print(f"[ERROR] Error en corrección: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
-
-@app.route('/text-suggestions', methods=['POST'])
-def get_text_suggestions():
-    """Endpoint para obtener sugerencias de corrección sin aplicarlas"""
-    data = request.json
-    text = data.get('text')
-    
-    if not text:
-        return jsonify({"error": "No text provided"}), 400
-    
-    try:
-        suggestions = text_corrector.get_suggestions(text)
-        return jsonify({"suggestions": suggestions}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
