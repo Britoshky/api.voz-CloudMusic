@@ -67,7 +67,7 @@ REDIS_NONCE_PREFIX = os.getenv('REDIS_NONCE_PREFIX', 'tts:nonce').strip()
 # Rate limiting (5 peticiones por usuario/IP por defecto)
 RATE_LIMIT_MAX_REQUESTS = int(os.getenv('RATE_LIMIT_MAX_REQUESTS', '5'))
 RATE_LIMIT_WINDOW_SECONDS = int(os.getenv('RATE_LIMIT_WINDOW_SECONDS', '86400'))
-RATE_LIMIT_EXEMPT_PATHS = {'/health'}
+RATE_LIMIT_EXEMPT_PATHS = {'/health', '/queue/status'}
 rate_limit_counters = {}
 rate_limit_lock = threading.Lock()
 
