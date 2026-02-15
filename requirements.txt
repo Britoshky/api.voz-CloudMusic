@@ -2,7 +2,10 @@ scipy
 librosa
 pydub
 flask
+gunicorn
 flask-cors
+redis
+cryptography
 soundfile
 python-dotenv
 transformers==4.38.0

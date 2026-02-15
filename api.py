@@ -5,10 +5,24 @@ import os
 import uuid
 import threading
 import time
+import base64
+import hashlib
+from urllib import request as urllib_request
+from urllib import parse as urllib_parse
 import soundfile as sf
 import librosa
 import json
 from dotenv import load_dotenv
+
+try:
+    import redis
+except ImportError:
+    redis = None
+
+try:
+    from cryptography.hazmat.primitives.serialization import load_pem_public_key
+except ImportError:
+    load_pem_public_key = None
 
 # Cargar variables de entorno
 load_dotenv()
@@ -23,12 +37,52 @@ CORS(app, origins=allowed_origins)
 app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY', 'dev-secret-key-change-me')
 app.config['DEBUG'] = os.getenv('FLASK_DEBUG', 'false').lower() == 'true'
 
-# Rate limiting (10 peticiones por usuario/IP por defecto)
-RATE_LIMIT_MAX_REQUESTS = int(os.getenv('RATE_LIMIT_MAX_REQUESTS', '10'))
+def _get_bool_env(name, default='false'):
+    return os.getenv(name, default).strip().lower() in {'1', 'true', 'yes', 'on'}
+
+# Allowlist de frontends (defensa en profundidad; solo se evalúa si vienen headers Origin/Referer)
+ALLOWED_FRONTEND_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv('ALLOWED_FRONTEND_ORIGINS', os.getenv('ALLOWED_ORIGINS', 'https://ai.cloudmusic.cl')).split(',')
+    if origin.strip()
+]
+
+# Firma frontend -> backend (Ed25519)
+REQUIRE_SIGNED_REQUESTS = _get_bool_env('REQUIRE_SIGNED_REQUESTS', 'true')
+SIGNATURE_ALGORITHM = os.getenv('SIGNATURE_ALGORITHM', 'ed25519').strip().lower()
+FRONTEND_KEY_ID = os.getenv('FRONTEND_KEY_ID', 'tts-frontend').strip()
+FRONTEND_PUBLIC_KEY_PEM = os.getenv('FRONTEND_PUBLIC_KEY_PEM', '').strip()
+SIGNATURE_MAX_AGE_SECONDS = int(os.getenv('SIGNATURE_MAX_AGE_SECONDS', '300'))
+
+# Turnstile (opcional en local, recomendado en producción)
+REQUIRE_TURNSTILE = _get_bool_env('REQUIRE_TURNSTILE', 'true')
+TURNSTILE_SECRET_KEY = os.getenv('TURNSTILE_SECRET_KEY', '').strip()
+TURNSTILE_VERIFY_URL = os.getenv('TURNSTILE_VERIFY_URL', 'https://challenges.cloudflare.com/turnstile/v0/siteverify').strip()
+
+# Redis
+REDIS_URL = os.getenv('REDIS_URL', 'redis://redis:6379/0').strip()
+REDIS_RATE_LIMIT_PREFIX = os.getenv('REDIS_RATE_LIMIT_PREFIX', 'tts:rate').strip()
+REDIS_NONCE_PREFIX = os.getenv('REDIS_NONCE_PREFIX', 'tts:nonce').strip()
+
+# Rate limiting (5 peticiones por usuario/IP por defecto)
+RATE_LIMIT_MAX_REQUESTS = int(os.getenv('RATE_LIMIT_MAX_REQUESTS', '5'))
 RATE_LIMIT_WINDOW_SECONDS = int(os.getenv('RATE_LIMIT_WINDOW_SECONDS', '86400'))
 RATE_LIMIT_EXEMPT_PATHS = {'/health'}
 rate_limit_counters = {}
 rate_limit_lock = threading.Lock()
+
+redis_client = None
+if redis and REDIS_URL:
+    try:
+        redis_client = redis.Redis.from_url(REDIS_URL, decode_responses=True)
+        redis_client.ping()
+        print(f"Redis conectado: {REDIS_URL}")
+    except Exception as redis_error:
+        redis_client = None
+        print(f"Redis no disponible (fallback memoria): {redis_error}")
+
+nonce_cache = {}
+nonce_cache_lock = threading.Lock()
 
 # Inicializar engine TTS
 engine = TTSEngine()
@@ -61,6 +115,179 @@ def get_client_identifier():
 
     return f"ip:{request.remote_addr or 'unknown'}"
 
+def _is_origin_allowed(origin):
+    return any(origin == allowed for allowed in ALLOWED_FRONTEND_ORIGINS)
+
+def _is_referer_allowed(referer):
+    return any(referer.startswith(f"{allowed}/") or referer == allowed for allowed in ALLOWED_FRONTEND_ORIGINS)
+
+def _get_request_body_sha256():
+    body = request.get_data(cache=True) or b''
+    return hashlib.sha256(body).hexdigest()
+
+def _get_public_key():
+    if SIGNATURE_ALGORITHM != 'ed25519':
+        return None
+    if not load_pem_public_key:
+        return None
+    if not FRONTEND_PUBLIC_KEY_PEM:
+        return None
+    pem = FRONTEND_PUBLIC_KEY_PEM.replace('\\n', '\n').encode('utf-8')
+    return load_pem_public_key(pem)
+
+def _cleanup_nonce_cache(now):
+    expired = [nonce for nonce, expiry in nonce_cache.items() if expiry <= now]
+    for nonce in expired:
+        nonce_cache.pop(nonce, None)
+
+def _register_nonce_once(nonce, now):
+    if redis_client:
+        nonce_key = f"{REDIS_NONCE_PREFIX}:{nonce}"
+        try:
+            was_set = redis_client.set(nonce_key, '1', nx=True, ex=SIGNATURE_MAX_AGE_SECONDS)
+            return bool(was_set)
+        except Exception:
+            pass
+
+    with nonce_cache_lock:
+        _cleanup_nonce_cache(now)
+        if nonce in nonce_cache:
+            return False
+        nonce_cache[nonce] = now + SIGNATURE_MAX_AGE_SECONDS
+        return True
+
+def _verify_turnstile_token(token, remote_ip):
+    if not TURNSTILE_SECRET_KEY:
+        return False, 'TURNSTILE_SECRET_KEY no configurado'
+
+    payload = {
+        'secret': TURNSTILE_SECRET_KEY,
+        'response': token,
+    }
+    if remote_ip:
+        payload['remoteip'] = remote_ip
+
+    encoded = urllib_parse.urlencode(payload).encode('utf-8')
+    req = urllib_request.Request(
+        TURNSTILE_VERIFY_URL,
+        data=encoded,
+        headers={'Content-Type': 'application/x-www-form-urlencoded'},
+        method='POST'
+    )
+
+    try:
+        with urllib_request.urlopen(req, timeout=8) as response:
+            data = json.loads(response.read().decode('utf-8'))
+    except Exception as verify_error:
+        return False, f'Error validando Turnstile: {verify_error}'
+
+    if data.get('success'):
+        return True, None
+
+    error_codes = data.get('error-codes') or ['turnstile-validation-failed']
+    return False, ','.join(error_codes)
+
+@app.before_request
+def enforce_origin_and_referer():
+    if request.method == 'OPTIONS' or request.path in RATE_LIMIT_EXEMPT_PATHS:
+        return None
+
+    origin = request.headers.get('Origin', '').strip()
+    referer = request.headers.get('Referer', '').strip()
+
+    # Server-to-server calls normalmente no incluyen Origin/Referer
+    if origin and not _is_origin_allowed(origin):
+        return jsonify({'error': 'Origin no permitido'}), 403
+
+    if referer and not _is_referer_allowed(referer):
+        return jsonify({'error': 'Referer no permitido'}), 403
+
+    return None
+
+@app.before_request
+def enforce_signed_requests():
+    if request.method == 'OPTIONS' or request.path in RATE_LIMIT_EXEMPT_PATHS:
+        return None
+
+    if not REQUIRE_SIGNED_REQUESTS:
+        return None
+
+    if SIGNATURE_ALGORITHM != 'ed25519':
+        return jsonify({'error': 'SIGNATURE_ALGORITHM inválido'}), 500
+
+    public_key = _get_public_key()
+    if not public_key:
+        return jsonify({'error': 'Firma requerida pero FRONTEND_PUBLIC_KEY_PEM no configurado (o falta cryptography)'}), 500
+
+    key_id = request.headers.get('X-Frontend-Key-Id', '').strip()
+    timestamp = request.headers.get('X-Frontend-Timestamp', '').strip()
+    nonce = request.headers.get('X-Frontend-Nonce', '').strip()
+    signature = request.headers.get('X-Frontend-Signature', '').strip()
+
+    if not key_id or not timestamp or not nonce or not signature:
+        return jsonify({'error': 'Headers de firma faltantes'}), 401
+
+    if key_id != FRONTEND_KEY_ID:
+        return jsonify({'error': 'Key ID inválido'}), 401
+
+    now = int(time.time())
+    try:
+        ts_int = int(timestamp)
+    except ValueError:
+        return jsonify({'error': 'Timestamp inválido'}), 401
+
+    if abs(now - ts_int) > SIGNATURE_MAX_AGE_SECONDS:
+        return jsonify({'error': 'Firma expirada'}), 401
+
+    if not _register_nonce_once(nonce, now):
+        return jsonify({'error': 'Nonce reutilizado'}), 401
+
+    body_hash = _get_request_body_sha256()
+    payload = f"{request.method}\n{request.path}\n{timestamp}\n{nonce}\n{body_hash}"
+
+    try:
+        signature_bytes = base64.b64decode(signature)
+    except Exception:
+        return jsonify({'error': 'Firma inválida (base64)'}), 401
+
+    try:
+        public_key.verify(signature_bytes, payload.encode('utf-8'))
+    except Exception:
+        return jsonify({'error': 'Firma inválida'}), 401
+
+    return None
+
+@app.before_request
+def enforce_turnstile():
+    if request.method != 'POST':
+        return None
+
+    if request.path in RATE_LIMIT_EXEMPT_PATHS:
+        return None
+
+    protected = request.path in {'/clone', '/voices'} or request.path.startswith('/voices/')
+    if not protected:
+        return None
+
+    if not REQUIRE_TURNSTILE:
+        return None
+
+    token = (
+        request.headers.get('X-Turnstile-Token')
+        or request.form.get('turnstile_token')
+        or (request.get_json(silent=True) or {}).get('turnstile_token')
+    )
+
+    if not token:
+        return jsonify({'error': 'Turnstile token requerido'}), 403
+
+    remote_ip = (request.headers.get('X-Forwarded-For', '').split(',')[0].strip() or request.remote_addr)
+    ok, error = _verify_turnstile_token(token, remote_ip)
+    if not ok:
+        return jsonify({'error': f'Turnstile inválido: {error}'}), 403
+
+    return None
+
 @app.before_request
 def enforce_rate_limit():
     """Limita a RATE_LIMIT_MAX_REQUESTS por usuario/IP en ventana de tiempo definida."""
@@ -69,6 +296,33 @@ def enforce_rate_limit():
 
     identifier = get_client_identifier()
     now = int(time.time())
+
+    # Redis rate limit (recomendado en producción)
+    if redis_client:
+        window_start = now - (now % RATE_LIMIT_WINDOW_SECONDS)
+        key = f"{REDIS_RATE_LIMIT_PREFIX}:{identifier}:{window_start}"
+        try:
+            used_requests = int(redis_client.incr(key))
+            if used_requests == 1:
+                redis_client.expire(key, RATE_LIMIT_WINDOW_SECONDS + 30)
+
+            if used_requests > RATE_LIMIT_MAX_REQUESTS:
+                ttl = int(redis_client.ttl(key))
+                retry_after = max(1, ttl if ttl > 0 else RATE_LIMIT_WINDOW_SECONDS)
+                return jsonify({
+                    "error": "Límite de peticiones alcanzado para esta ventana",
+                    "limit": RATE_LIMIT_MAX_REQUESTS,
+                    "used": used_requests,
+                    "remaining": 0,
+                    "retry_after_seconds": retry_after,
+                    "window_seconds": RATE_LIMIT_WINDOW_SECONDS,
+                    "identifier": identifier
+                }), 429
+
+            return None
+        except Exception:
+            # fallback memoria
+            pass
 
     with rate_limit_lock:
         entry = rate_limit_counters.get(identifier)
@@ -134,20 +388,14 @@ def save_voices_db(voices):
 
 @app.route('/tts', methods=['POST'])
 def generate_speech():
-    """Endpoint simple para TTS sin clonación de voz"""
-    data = request.json
-    text = data.get('text')
+    """XTTS requiere audio de referencia; redirigimos a /clone o /voices/<id>/use."""
+    data = request.get_json(silent=True) or {}
     language = data.get('language', 'es')
-    
-    if not text:
-        return jsonify({"error": "No text provided"}), 400
-    
-    try:
-        output_path = os.path.join(OUTPUT_DIR, f"{uuid.uuid4()}.wav")
-        engine.text_to_speech(text, output_path, None, language)
-        return send_file(output_path, mimetype='audio/wav')
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+
+    return jsonify({
+        "error": "XTTS requiere audio de referencia. Usa /clone o /voices/{voice_id}/use",
+        "language": language
+    }), 400
 
 @app.route('/clone', methods=['POST'])
 def clone_voice():

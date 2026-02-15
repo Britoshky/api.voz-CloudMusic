@@ -35,5 +35,5 @@ EXPOSE 4000
 ENV PYTHONUNBUFFERED=1
 ENV FLASK_PORT=4000
 
-# Comando de inicio
-CMD ["venv/bin/python", "api.py"]
+# Comando de inicio (producción estable)
+CMD ["sh", "-c", "venv/bin/gunicorn --bind 0.0.0.0:${FLASK_PORT:-4000} --workers ${GUNICORN_WORKERS:-1} --threads ${GUNICORN_THREADS:-8} --timeout ${GUNICORN_TIMEOUT:-600} api:app"]

@@ -57,7 +57,7 @@ FLASK_DEBUG=false
 FLASK_SECRET_KEY=your-secret-key-here-change-in-production
 
 # Rate limit por usuario/IP
-RATE_LIMIT_MAX_REQUESTS=10
+RATE_LIMIT_MAX_REQUESTS=5
 RATE_LIMIT_WINDOW_SECONDS=86400
 ```
 
@@ -114,19 +114,37 @@ En "Advanced" → "Docker Options":
    - Click "Deploy"
    - Espera 5-10 minutos (primera vez descarga modelo XTTS)
 
-## 📡 Endpoints
+## 📡 Endpoints (cola asíncrona 1x1)
 
 ### POST /clone
-Clona voz desde archivo de audio
+Encola un job de clonación de voz y retorna `job_id`
 ```bash
 curl -X POST http://localhost:5002/clone \
   -F "audio=@voz.mp3" \
   -F "text=Hola mundo" \
   -F "language=es" \
   -F "temperature=0.75" \
-  -F "speed=1.0" \
-  --output resultado.wav
+  -F "speed=1.0"
 ```
+
+Respuesta esperada:
+```json
+{
+  "job_id": "uuid",
+  "status": "queued",
+  "status_url": "/jobs/{job_id}",
+  "result_url": "/jobs/{job_id}/result"
+}
+```
+
+### GET /jobs/{job_id}
+Consulta estado del job (`queued`, `processing`, `completed`, `failed`)
+
+### GET /jobs/{job_id}/result
+Descarga el WAV cuando el job esté en `completed`
+
+### GET /queue/status
+Estado global de cola y worker
 
 ### GET /voices
 Lista voces guardadas
@@ -135,7 +153,7 @@ Lista voces guardadas
 Guarda voz en galería
 
 ### POST /voices/{id}/use
-Usa voz de galería
+Encola job para usar una voz de galería
 
 ## 🎛️ Parámetros de Calidad
 

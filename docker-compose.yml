@@ -13,16 +13,32 @@ services:
     environment:
       - FLASK_PORT=4000
       - FLASK_DEBUG=false
+      - GUNICORN_WORKERS=1
+      - GUNICORN_THREADS=8
+      - GUNICORN_TIMEOUT=600
       - COQUI_TOS_AGREED=1
       - PYTHONUNBUFFERED=1
       - ALLOWED_ORIGINS=http://localhost:3004,https://ai.cloudmusic.cl
       - FLASK_SECRET_KEY=production-secret-key-tts-service-2026
+      - RATE_LIMIT_MAX_REQUESTS=5
+      - RATE_LIMIT_WINDOW_SECONDS=86400
+      - ALLOWED_FRONTEND_ORIGINS=https://ai.cloudmusic.cl,http://localhost:3004
+      - REQUIRE_SIGNED_REQUESTS=true
+      - SIGNATURE_ALGORITHM=ed25519
+      - FRONTEND_KEY_ID=tts-frontend
+      - FRONTEND_PUBLIC_KEY_PEM=
+      - SIGNATURE_MAX_AGE_SECONDS=300
+      - REQUIRE_TURNSTILE=false
+      - TURNSTILE_SECRET_KEY=
+      - REDIS_URL=redis://redis:6379/0
       - OUTPUT_DIR=outputs
       - TEMP_DIR=temp_uploads
       - VOICES_DIR=voice_gallery
       - VOICES_DB=voices_db.json
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    depends_on:
+      - redis
     restart: unless-stopped
     deploy:
       resources:
@@ -34,3 +50,9 @@ services:
             - driver: nvidia
               count: 1
               capabilities: [gpu]
+
+  redis:
+    image: redis:7-alpine
+    container_name: tts-redis
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    restart: unless-stopped
