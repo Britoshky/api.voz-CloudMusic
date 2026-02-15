@@ -573,6 +573,38 @@ def use_voice(voice_id):
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+@app.route('/queue/status', methods=['GET'])
+def queue_status():
+    """Retorna el estado de la cola de TTS (jobs en espera y procesando)."""
+    try:
+        queue_info = {
+            "status": "operational",
+            "redis_available": redis_client is not None,
+            "jobs_queued": 0,
+            "rate_limit_users": 0,
+            "timestamp": int(time.time())
+        }
+        
+        if redis_client:
+            try:
+                # Contar jobs en cola (usando patrón key)
+                queue_keys = redis_client.keys("tts:job:*")
+                queue_info["jobs_queued"] = len(queue_keys) if queue_keys else 0
+                
+                # Contar usuarios activos en rate limit
+                rate_limit_keys = redis_client.keys("tts:rate:*")
+                queue_info["rate_limit_users"] = len(rate_limit_keys) if rate_limit_keys else 0
+            except Exception:
+                pass
+        else:
+            # Fallback a memoria si Redis no está disponible
+            queue_info["jobs_queued"] = 0
+            queue_info["rate_limit_users"] = len(rate_limit_counters)
+        
+        return jsonify(queue_info), 200
+    except Exception as e:
+        return jsonify({"error": str(e), "status": "unavailable"}), 500
+
 @app.route('/health', methods=['GET'])
 def health_check():
     """Endpoint de health check para Coolify"""
