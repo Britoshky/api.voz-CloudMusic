@@ -5,8 +5,6 @@ import os
 import uuid
 import threading
 import time
-import base64
-import hashlib
 from urllib import request as urllib_request
 from urllib import parse as urllib_parse
 import soundfile as sf
@@ -18,11 +16,6 @@ try:
     import redis
 except ImportError:
     redis = None
-
-try:
-    from cryptography.hazmat.primitives.serialization import load_pem_public_key
-except ImportError:
-    load_pem_public_key = None
 
 # Cargar variables de entorno
 load_dotenv()
@@ -47,13 +40,6 @@ ALLOWED_FRONTEND_ORIGINS = [
     if origin.strip()
 ]
 
-# Firma frontend -> backend (Ed25519)
-REQUIRE_SIGNED_REQUESTS = _get_bool_env('REQUIRE_SIGNED_REQUESTS', 'true')
-SIGNATURE_ALGORITHM = os.getenv('SIGNATURE_ALGORITHM', 'ed25519').strip().lower()
-FRONTEND_KEY_ID = os.getenv('FRONTEND_KEY_ID', 'tts-frontend').strip()
-FRONTEND_PUBLIC_KEY_PEM = os.getenv('FRONTEND_PUBLIC_KEY_PEM', '').strip()
-SIGNATURE_MAX_AGE_SECONDS = int(os.getenv('SIGNATURE_MAX_AGE_SECONDS', '300'))
-
 # Turnstile (opcional en local, recomendado en producción)
 REQUIRE_TURNSTILE = _get_bool_env('REQUIRE_TURNSTILE', 'true')
 TURNSTILE_SECRET_KEY = os.getenv('TURNSTILE_SECRET_KEY', '').strip()
@@ -62,7 +48,6 @@ TURNSTILE_VERIFY_URL = os.getenv('TURNSTILE_VERIFY_URL', 'https://challenges.clo
 # Redis
 REDIS_URL = os.getenv('REDIS_URL', 'redis://redis:6379/0').strip()
 REDIS_RATE_LIMIT_PREFIX = os.getenv('REDIS_RATE_LIMIT_PREFIX', 'tts:rate').strip()
-REDIS_NONCE_PREFIX = os.getenv('REDIS_NONCE_PREFIX', 'tts:nonce').strip()
 
 # Rate limiting (5 peticiones por usuario/IP por defecto)
 RATE_LIMIT_MAX_REQUESTS = int(os.getenv('RATE_LIMIT_MAX_REQUESTS', '5'))
@@ -80,9 +65,6 @@ if redis and REDIS_URL:
     except Exception as redis_error:
         redis_client = None
         print(f"Redis no disponible (fallback memoria): {redis_error}")
-
-nonce_cache = {}
-nonce_cache_lock = threading.Lock()
 
 # Inicializar engine TTS
 engine = TTSEngine()
@@ -120,41 +102,6 @@ def _is_origin_allowed(origin):
 
 def _is_referer_allowed(referer):
     return any(referer.startswith(f"{allowed}/") or referer == allowed for allowed in ALLOWED_FRONTEND_ORIGINS)
-
-def _get_request_body_sha256():
-    body = request.get_data(cache=True) or b''
-    return hashlib.sha256(body).hexdigest()
-
-def _get_public_key():
-    if SIGNATURE_ALGORITHM != 'ed25519':
-        return None
-    if not load_pem_public_key:
-        return None
-    if not FRONTEND_PUBLIC_KEY_PEM:
-        return None
-    pem = FRONTEND_PUBLIC_KEY_PEM.replace('\\n', '\n').encode('utf-8')
-    return load_pem_public_key(pem)
-
-def _cleanup_nonce_cache(now):
-    expired = [nonce for nonce, expiry in nonce_cache.items() if expiry <= now]
-    for nonce in expired:
-        nonce_cache.pop(nonce, None)
-
-def _register_nonce_once(nonce, now):
-    if redis_client:
-        nonce_key = f"{REDIS_NONCE_PREFIX}:{nonce}"
-        try:
-            was_set = redis_client.set(nonce_key, '1', nx=True, ex=SIGNATURE_MAX_AGE_SECONDS)
-            return bool(was_set)
-        except Exception:
-            pass
-
-    with nonce_cache_lock:
-        _cleanup_nonce_cache(now)
-        if nonce in nonce_cache:
-            return False
-        nonce_cache[nonce] = now + SIGNATURE_MAX_AGE_SECONDS
-        return True
 
 def _verify_turnstile_token(token, remote_ip):
     if not TURNSTILE_SECRET_KEY:
@@ -201,59 +148,6 @@ def enforce_origin_and_referer():
 
     if referer and not _is_referer_allowed(referer):
         return jsonify({'error': 'Referer no permitido'}), 403
-
-    return None
-
-@app.before_request
-def enforce_signed_requests():
-    if request.method == 'OPTIONS' or request.path in RATE_LIMIT_EXEMPT_PATHS:
-        return None
-
-    if not REQUIRE_SIGNED_REQUESTS:
-        return None
-
-    if SIGNATURE_ALGORITHM != 'ed25519':
-        return jsonify({'error': 'SIGNATURE_ALGORITHM inválido'}), 500
-
-    public_key = _get_public_key()
-    if not public_key:
-        return jsonify({'error': 'Firma requerida pero FRONTEND_PUBLIC_KEY_PEM no configurado (o falta cryptography)'}), 500
-
-    key_id = request.headers.get('X-Frontend-Key-Id', '').strip()
-    timestamp = request.headers.get('X-Frontend-Timestamp', '').strip()
-    nonce = request.headers.get('X-Frontend-Nonce', '').strip()
-    signature = request.headers.get('X-Frontend-Signature', '').strip()
-
-    if not key_id or not timestamp or not nonce or not signature:
-        return jsonify({'error': 'Headers de firma faltantes'}), 401
-
-    if key_id != FRONTEND_KEY_ID:
-        return jsonify({'error': 'Key ID inválido'}), 401
-
-    now = int(time.time())
-    try:
-        ts_int = int(timestamp)
-    except ValueError:
-        return jsonify({'error': 'Timestamp inválido'}), 401
-
-    if abs(now - ts_int) > SIGNATURE_MAX_AGE_SECONDS:
-        return jsonify({'error': 'Firma expirada'}), 401
-
-    if not _register_nonce_once(nonce, now):
-        return jsonify({'error': 'Nonce reutilizado'}), 401
-
-    body_hash = _get_request_body_sha256()
-    payload = f"{request.method}\n{request.path}\n{timestamp}\n{nonce}\n{body_hash}"
-
-    try:
-        signature_bytes = base64.b64decode(signature)
-    except Exception:
-        return jsonify({'error': 'Firma inválida (base64)'}), 401
-
-    try:
-        public_key.verify(signature_bytes, payload.encode('utf-8'))
-    except Exception:
-        return jsonify({'error': 'Firma inválida'}), 401
 
     return None
 
