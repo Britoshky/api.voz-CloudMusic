@@ -8,6 +8,6 @@ redis
 cryptography
 soundfile
 python-dotenv
-transformers==4.38.0
+transformers==5.10.1
 torchcodec
 git+https://github.com/coqui-ai/TTS.git
